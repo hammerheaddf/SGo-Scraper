@@ -47,7 +47,8 @@ func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downlo
 
 	fmt.Printf("Found %q set from %s — %d image(s). Downloading...\n", info.AlbumName, info.ModelName, len(imagesFound))
 
-	albumDir := downloadsDir + "/photos/" + info.ModelName + " - " + info.AlbumName
+	bucket := getBucket(info.ModelName)
+	albumDir := fmt.Sprintf("%s/photos/%s/%s/%s", downloadsDir, bucket, info.ModelName, info.AlbumName)
 	checkAndCreateDir(albumDir)
 
 	var wg sync.WaitGroup
@@ -169,7 +170,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 		return
 	}
 
-	modelDir := downloadsDir + "/candids/" + modelName
+	bucket := getBucket(modelName)
+	modelDir := fmt.Sprintf("%s/candids/%s/%s", downloadsDir, bucket, modelName)
 
 	// Skip if already downloaded.
 	if entries, err := os.ReadDir(modelDir); err == nil {

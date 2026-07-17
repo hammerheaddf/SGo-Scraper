@@ -92,7 +92,9 @@ func downloadVideoPost(videoURL string, downloadsDir string, expectedModel strin
 	}
 
 	videoID, postTitle, modelName := parseVideoInfo(videoURL, rawBytes, expectedModel)
-	modelDir := downloadsDir + "/candids/" + modelName
+	
+	bucket := getBucket(modelName)
+	modelDir := fmt.Sprintf("%s/candids/%s/%s", downloadsDir, bucket, modelName)
 
 	// Skip if already downloaded.
 	if entries, err := os.ReadDir(modelDir); err == nil {

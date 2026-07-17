@@ -181,7 +181,7 @@ func saveImage(imageURL string, output string) (int64, error) {
 	img, err := os.Create(output)
 	if err != nil {
 		return 0, err
-	}
+}
 	defer img.Close()
 
 	n, err := io.Copy(img, resp.Body)
@@ -248,4 +248,16 @@ func ZipFiles(filename string, files []string) error {
 	}
 
 	return nil
+}
+
+// getBucket groups resources under a single alphabetical character tree structure.
+func getBucket(name string) string {
+	if name == "" {
+		return "#"
+	}
+	first := strings.ToUpper(string([]rune(name)[0]))
+	if first >= "A" && first <= "Z" {
+		return first
+	}
+	return "#"
 }
