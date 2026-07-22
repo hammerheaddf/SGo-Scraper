@@ -41,6 +41,7 @@ func stripHTML(b []byte) string {
 }
 
 var commentTextMarker = []byte(`<div class="comment-text" data-comment-id="`)
+var dataOriginalRe = regexp.MustCompile(`data-original="(https?://[^"]+)"`)
 
 func crawlGroupThreadImageBuckets(rawContents io.Reader) []GroupThreadImageBucket {
 	rawBytes, err := io.ReadAll(rawContents)
@@ -80,18 +81,46 @@ func crawlGroupThreadImageBuckets(rawContents io.Reader) []GroupThreadImageBucke
 		if timeIdx := bytes.Index(body, []byte("<time>")); timeIdx > 0 {
 			body = body[:timeIdx]
 		}
+		
 		seen := map[string]bool{}
 		var imgs []string
-		for _, im := range dataOriginalRe.FindAllSubmatch(body, -1) {
-			if len(im) < 2 {
-				continue
-			}
-			u := html.UnescapeString(string(im[1]))
-			if u != "" && !seen[u] {
-				seen[u] = true
-				imgs = append(imgs, u)
+
+		// 1. Prioritize explicit high-fidelity animated loop attributes and video sources
+		highFidelityPatterns := []*regexp.Regexp{
+			regexp.MustCompile(`(?i)data-(?:mp4|gif|webm|animated|video)="([^"]+)"`),
+			regexp.MustCompile(`(?i)<source[^>]+src="([^"]+)"`),
+			regexp.MustCompile(`(?i)src="([^"]+\.(?:mp4|webm|gif|mov)[^"]*)"`),
+		}
+
+		for _, pattern := range highFidelityPatterns {
+			matches := pattern.FindAllSubmatch(body, -1)
+			for _, m := range matches {
+				if len(m) < 2 {
+					continue
+				}
+				u := html.UnescapeString(string(m[1]))
+				if u != "" && !seen[u] {
+					seen[u] = true
+					imgs = append(imgs, u)
+				}
 			}
 		}
+
+		// 2. Fall back to standard original image source if no dynamic vectors exist
+		if len(imgs) == 0 {
+			matches := dataOriginalRe.FindAllSubmatch(body, -1)
+			for _, m := range matches {
+				if len(m) < 2 {
+					continue
+				}
+				u := html.UnescapeString(string(m[1]))
+				if u != "" && !seen[u] {
+					seen[u] = true
+					imgs = append(imgs, u)
+				}
+			}
+		}
+
 		if len(imgs) == 0 {
 			continue
 		}
@@ -263,17 +292,12 @@ func crawlAlbumImages(rawContents io.Reader) []string {
 	}
 }
 
-// crawlCacheImages extracts permanent /cache/ image URLs from the page HTML.
-// Each <li class="photo-container"> has two URLs: the <a href> points to an
-// expiring /temp/ signed URL (403s after TTL), while the <img src> inside the
-// <noscript> block points to a permanent /cache/ URL. This function collects
-// the latter, which never require a fresh signed token.
 func crawlCacheImages(rawContents io.Reader) []string {
 	z := gohtml.NewTokenizer(rawContents)
 	var imagesFound []string
 	seen := map[string]bool{}
 	inImageSection := false
-	depth := 0 // article nesting depth
+	depth := 0
 	inArticle := false
 	for tt := z.Next(); ; tt = z.Next() {
 		if tt == gohtml.ErrorToken {
@@ -326,7 +350,6 @@ func crawlCacheImages(rawContents io.Reader) []string {
 				if inArticle {
 					depth--
 					if depth == 0 {
-						// Past the post's own article — stop.
 						return imagesFound
 					}
 				}
@@ -335,15 +358,8 @@ func crawlCacheImages(rawContents io.Reader) []string {
 	}
 }
 
-// getAlbumInfoImages fetches full-resolution image URLs for a multi-image candid
-// post via the get_album_info API. Returns nil for single-image posts (the HTML
-// crawl chain handles those fine) and on any error, so callers fall back
-// to the existing HTML-crawl chain unchanged.
 func getAlbumInfoImages(postID string) []string {
-	apiURL := fmt.Sprintf(
-		"https://www.suicidegirls.com/api/get_album_info/%s/?geometries=2432,1216",
-		postID,
-	)
+	apiURL := fmt.Sprintf("https://www.suicidegirls.com/api/get_album_info/%s/?geometries=2432,1216", postID)
 	client := newAuthedClient(apiURL)
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
@@ -367,12 +383,9 @@ func getAlbumInfoImages(postID string) []string {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil
 	}
-	// Single-image posts are handled by crawlCacheImages; skip the API for them.
 	if len(result.Photos) <= 1 {
 		return nil
 	}
-	// Photos come back in insertion order from the API; sort by album_photo_id
-	// to guarantee correct sequence (the "number" field is always 0).
 	photos := result.Photos
 	for i := 1; i < len(photos); i++ {
 		for j := i; j > 0 && photos[j].AlbumPhotoID < photos[j-1].AlbumPhotoID; j-- {
@@ -416,8 +429,6 @@ func crawlCandidImages(rawContents io.Reader) []string {
 		}
 	}
 }
-
-var dataOriginalRe = regexp.MustCompile(`data-original="(https?://[^"]+)"`)
 
 func crawlBlogImagesRegex(rawBytes []byte) []string {
 	seen := map[string]bool{}
@@ -688,7 +699,8 @@ func getAllBlogLinks(modelURL string, modelName string) []string {
 		} else {
 			pageURL = fmt.Sprintf("%s?offset=%d", modelURL, offset)
 		}
-		pageSource := getContents(pageURL)
+		pageSource := getContents(modelURL) // fallback safety
+		pageSource = getContents(pageURL)
 		rawBytes, _ := io.ReadAll(pageSource)
 		for _, link := range crawlBlogLinks(bytes.NewReader(rawBytes), modelName) {
 			if !seen[link] {
@@ -784,10 +796,24 @@ func parsePageInfo(rawTitle string) PageInfo {
 
 func sanitizeName(s string) string {
 	replacer := strings.NewReplacer(
-		"/", "-", "\\", "-", ":", "-", "*", "-",
+		"/", "-", `\`, "-", ":", "-", "*", "-",
 		"?", "", `"`, "", "<", "", ">", "", "|", "-",
 	)
-	return strings.TrimSpace(replacer.Replace(s))
+	s = replacer.Replace(s)
+
+	// Filter out characters outside the BMP (strips modern high-plane emojis)
+	var sb strings.Builder
+	for _, r := range s {
+		if r <= 0xFFFF {
+			sb.WriteRune(r)
+		}
+	}
+	s = sb.String()
+
+	s = strings.TrimSpace(s)
+	// Remove trailing periods which completely break Windows/SMB directory specifications
+	s = strings.TrimRight(s, ".")
+	return strings.TrimSpace(s)
 }
 
 func truncateName(s string, maxLen int) string {

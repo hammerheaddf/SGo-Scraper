@@ -60,15 +60,15 @@ func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downlo
 		wg.Add(1)
 		go func(i int, imageURL string) {
 			defer wg.Done()
-			imageOutput := albumDir + "/" + albumID + " - " + fmt.Sprintf("%04d", i+1) + ".jpg"
-			b, err := saveImage(imageURL, imageOutput)
+			imageOutputBase := albumDir + "/" + albumID + " - " + fmt.Sprintf("%04d", i+1)
+			b, finalPath, err := saveImage(imageURL, imageOutputBase)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				fmt.Printf("[%04d/%04d] — error: %v\n", i+1, total, err)
 				return
 			}
-			imagesDownloaded[i] = imageOutput
+			imagesDownloaded[i] = finalPath
 			fmt.Printf("[%04d/%04d] — %.2f MB\n", i+1, total, float64(b)/1024/1024)
 		}(i, imageURL)
 	}
@@ -188,8 +188,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 	fmt.Printf("Candid post %s/%s (%s) — %d image(s)\n", modelName, postID, postName, len(imagesFound))
 
 	if len(imagesFound) == 1 {
-		imageOutput := fmt.Sprintf("%s/%s - %s - 0001.jpg", modelDir, postID, postName)
-		b, err := saveImage(imagesFound[0], imageOutput)
+		imageOutputBase := fmt.Sprintf("%s/%s - %s - 0001", modelDir, postID, postName)
+		b, _, err := saveImage(imagesFound[0], imageOutputBase)
 		if err != nil {
 			fmt.Printf("[0001/0001] — error: %v\n", err)
 			return
@@ -209,8 +209,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 		wg.Add(1)
 		go func(i int, imageURL string) {
 			defer wg.Done()
-			imageOutput := fmt.Sprintf("%s/%s - %s - %04d.jpg", postDir, postID, postName, i+1)
-			b, err := saveImage(imageURL, imageOutput)
+			imageOutputBase := fmt.Sprintf("%s/%s - %s - %04d", postDir, postID, postName, i+1)
+			b, _, err := saveImage(imageURL, imageOutputBase)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -297,8 +297,8 @@ func downloadGroupThread(threadURL string, downloadsDir string) {
 
 		total := len(bucket.Images)
 		if total == 1 {
-			imageOutput := fmt.Sprintf("%s/%s - 0001.jpg", threadDir, baseName)
-			b, err := saveImage(bucket.Images[0], imageOutput)
+			imageOutputBase := fmt.Sprintf("%s/%s - 0001", threadDir, baseName)
+			b, _, err := saveImage(bucket.Images[0], imageOutputBase)
 			if err != nil {
 				fmt.Printf("%s [0001/0001] — error: %v\n", baseName, err)
 				continue
@@ -313,8 +313,8 @@ func downloadGroupThread(threadURL string, downloadsDir string) {
 			wg.Add(1)
 			go func(i int, imageURL string) {
 				defer wg.Done()
-				imageOutput := fmt.Sprintf("%s/%s - %04d.jpg", threadDir, baseName, i+1)
-				b, err := saveImage(imageURL, imageOutput)
+				imageOutputBase := fmt.Sprintf("%s/%s - %04d", threadDir, baseName, i+1)
+				b, _, err := saveImage(imageURL, imageOutputBase)
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
@@ -336,8 +336,23 @@ func main() {
 
 	downloadsDir := os.Getenv("DOWNLOADSDIR")
 	args := os.Args
+
+	// --- GLOBAL AND LOCAL SEARCH CONTEXT INTERCEPTOR ---
+	if len(args) >= 3 && args[1] == "search" {
+		if len(args) == 3 {
+			targetUser := args[2]
+			runGlobalSearch(targetUser, downloadsDir)
+		} else {
+			threadURL := args[2]
+			targetUser := args[3]
+			executeSearchAndDownload(threadURL, targetUser, downloadsDir)
+		}
+		return
+	}
+	// ----------------------------------------------------
+
 	if len(args) < 2 {
-		panic("usage: SGo-Scraper <url> [-z]")
+		panic("usage: SGo-Scraper <url> [-z] OR SGo-Scraper search [url] <username>")
 	}
 
 	albumURL := args[1]
