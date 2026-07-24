@@ -51,20 +51,71 @@ func parseVideoInfo(videoURL string, rawBytes []byte, expectedModel string) (str
 
 	htmlStr := string(rawBytes)
 	postTitle := ""
+	modelName := titleCaseModelName(expectedModel)
+	modelName = sanitizeName(modelName)
+
 	if m := ogTitleRe.FindStringSubmatch(htmlStr); len(m) > 1 {
 		og := strings.TrimSpace(m[1])
 		if idx := strings.LastIndex(og, " by "); idx != -1 {
 			postTitle = sanitizeName(strings.TrimSpace(og[:idx]))
+			if modelName == "Unknown" || modelName == "" {
+				rest := strings.TrimSpace(og[idx+len(" by "):])
+				rest = strings.Split(rest, " | ")[0]
+				rest = strings.Split(rest, " - ")[0]
+				modelName = titleCaseModelName(rest)
+			}
 		} else {
-			postTitle = sanitizeName(strings.SplitN(og, " | ", 2)[0])
+			var ogParts []string
+			if strings.Contains(og, " | ") {
+				ogParts = strings.Split(og, " | ")
+			} else if strings.Contains(og, " - ") {
+				ogParts = strings.Split(og, " - ")
+			}
+			if len(ogParts) > 1 {
+				postTitle = sanitizeName(ogParts[0])
+				if modelName == "Unknown" || modelName == "" {
+					candidate := strings.TrimSpace(ogParts[1])
+					if !strings.EqualFold(candidate, "SuicideGirls") && !strings.EqualFold(candidate, "SGirls") {
+						modelName = titleCaseModelName(candidate)
+					} else if len(ogParts) > 2 {
+						modelName = titleCaseModelName(ogParts[2])
+					}
+				}
+			} else {
+				postTitle = sanitizeName(og)
+			}
 		}
 	}
+
 	if postTitle == "" {
 		title := strings.TrimSpace(getTitle(bytes.NewReader(rawBytes)))
 		if idx := strings.LastIndex(title, " by "); idx != -1 {
 			postTitle = sanitizeName(strings.TrimSpace(title[:idx]))
+			if modelName == "Unknown" || modelName == "" {
+				rest := strings.TrimSpace(title[idx+len(" by "):])
+				rest = strings.Split(rest, " | ")[0]
+				rest = strings.Split(rest, " - ")[0]
+				modelName = titleCaseModelName(rest)
+			}
+		} else {
+			var titleParts []string
+			if strings.Contains(title, " | ") {
+				titleParts = strings.Split(title, " | ")
+			} else if strings.Contains(title, " - ") {
+				titleParts = strings.Split(title, " - ")
+			}
+			if len(titleParts) > 1 {
+				postTitle = sanitizeName(titleParts[0])
+				if modelName == "Unknown" || modelName == "" {
+					candidate := strings.TrimSpace(titleParts[1])
+					if !strings.EqualFold(candidate, "SuicideGirls") && !strings.EqualFold(candidate, "SGirls") {
+						modelName = titleCaseModelName(candidate)
+					}
+				}
+			}
 		}
 	}
+
 	if postTitle == "" {
 		postTitle = videoSlug
 	}
@@ -72,13 +123,24 @@ func parseVideoInfo(videoURL string, rawBytes []byte, expectedModel string) (str
 		postTitle = videoID
 	}
 
-	modelName := titleCaseModelName(expectedModel)
-	modelName = sanitizeName(modelName)
+	// Fallback to scanning page HTML for model profile links if modelName is still Unknown/empty
 	if modelName == "Unknown" || modelName == "" {
-		title := strings.TrimSpace(getTitle(bytes.NewReader(rawBytes)))
-		if idx := strings.LastIndex(title, " by "); idx != -1 {
-			rest := strings.TrimSpace(title[idx+len(" by "):])
-			modelName = titleCaseModelName(strings.SplitN(rest, " | ", 2)[0])
+		loggedInUser := ""
+		userRe := regexp.MustCompile(`sg-user_name="([^"]+)"`)
+		if um := userRe.FindSubmatch(rawBytes); len(um) > 1 {
+			loggedInUser = string(um[1])
+		}
+
+		allMatches := memberHrefRe.FindAllSubmatch(rawBytes, -1)
+		for _, m := range allMatches {
+			if len(m) > 1 {
+				candidate := string(m[1])
+				if loggedInUser != "" && strings.EqualFold(candidate, loggedInUser) {
+					continue
+				}
+				modelName = titleCaseModelName(candidate)
+				break
+			}
 		}
 	}
 
