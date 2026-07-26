@@ -24,11 +24,6 @@ while ($true) {
                    Select-Object -First 1
 
             if ($Url) {
-
-                Write-Host ""
-                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')]"
-                Write-Host "URL: $Url"
-
                 Start-Process `
                     -FilePath (Join-Path $ScraperDir "SGo-Scraper-master.exe") `
                     -ArgumentList $Url `
