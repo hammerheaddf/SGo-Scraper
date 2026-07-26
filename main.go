@@ -12,24 +12,30 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func downloadAlbum(albumURL string, downloadsDir string, finalizeWithZip bool, isCandid bool) {
+func downloadAlbum(albumURL string, downloadsDir string, finalizeWithZip bool, isCandid bool, currIndex, totalCount int) {
 	rawBytes := getContents(albumURL)
 
 	info := parsePageInfo(getTitle(bytes.NewReader(rawBytes)))
+
+	if totalCount <= 1 && extractModelFromURL(albumURL) == "" && info.ModelName != "" {
+		fmt.Println("Model:", info.ModelName)
+		fmt.Println("ModelDir:", filepath.Join(downloadsDir, info.ModelName))
+		fmt.Println()
+	}
 
 	if isCandid || info.IsCandid {
 		if isCandid && info.PostName == "" && info.AlbumName != "" {
 			info.PostName = info.AlbumName
 			info.AlbumName = ""
 		}
-		downloadCandidPost(albumURL, rawBytes, info, downloadsDir)
+		downloadCandidPost(albumURL, rawBytes, info, downloadsDir, currIndex, totalCount)
 		return
 	}
 
-	downloadProperAlbum(albumURL, rawBytes, info, downloadsDir, finalizeWithZip)
+	downloadProperAlbum(albumURL, rawBytes, info, downloadsDir, finalizeWithZip, currIndex, totalCount)
 }
 
-func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downloadsDir string, finalizeWithZip bool) {
+func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downloadsDir string, finalizeWithZip bool, currIndex, totalCount int) {
 	urlParts := strings.Split(strings.TrimSuffix(albumURL, "/"), "/")
 	albumID := ""
 	for i, p := range urlParts {
@@ -43,7 +49,8 @@ func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downlo
 	if dbErr == nil {
 		defer db.Close()
 		if isDownloaded(db, "album", albumID) {
-			fmt.Printf("[skip] Album %s/%s — already in database\n", info.ModelName, albumID)
+			idxStr := formatIndex(currIndex, totalCount)
+			fmt.Printf("%s[skip] Album %s/%s — already in database\n", idxStr, info.ModelName, albumID)
 			return
 		}
 	}
@@ -51,7 +58,8 @@ func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downlo
 	imagesFound := crawlAlbumImages(bytes.NewReader(rawBytes))
 	albumDate, dateErr := getAlbumDate(bytes.NewReader(rawBytes))
 
-	fmt.Printf("Found %q set from %s — %d image(s). Downloading...\n", info.AlbumName, info.ModelName, len(imagesFound))
+	idxStr := formatIndex(currIndex, totalCount)
+	fmt.Printf("%sFound %q set from %s — %d image(s). Downloading...\n", idxStr, info.AlbumName, info.ModelName, len(imagesFound))
 
 	albumDir := filepath.Join(downloadsDir, info.ModelName, "photos", info.ModelName+" - "+info.AlbumName)
 	fmt.Println("AlbumDir:", albumDir) //debug info for looking directory name.
@@ -135,7 +143,7 @@ func downloadProperAlbum(albumURL string, rawBytes []byte, info PageInfo, downlo
 	fmt.Println()
 }
 
-func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloadsDir string) {
+func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloadsDir string, currIndex, totalCount int) {
 	parts := strings.Split(strings.TrimSuffix(albumURL, "/"), "/")
 
 	postID := ""
@@ -201,7 +209,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 		imagesFound = crawlBlogImagesRegex(rawBytes)
 	}
 	if len(imagesFound) == 0 {
-		fmt.Printf("Candid post %s/%s — no images found, skipping\n", modelName, postID)
+		idxStr := formatIndex(currIndex, totalCount)
+		fmt.Printf("%sCandid post %s/%s — no images found, skipping\n", idxStr, modelName, postID)
 		return
 	}
 
@@ -209,7 +218,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 	if dbErr == nil {
 		if isDownloaded(db, "candid", postID) {
 			db.Close()
-			fmt.Printf("[skip] Candid post %s/%s — already in database\n", modelName, postID)
+			idxStr := formatIndex(currIndex, totalCount)
+			fmt.Printf("%s[skip] Candid post %s/%s — already in database\n", idxStr, modelName, postID)
 			return
 		}
 	}
@@ -220,7 +230,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 	if entries, err := os.ReadDir(modelDir); err == nil {
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), postID) {
-				fmt.Printf("[skip] Candid post %s/%s — already on disk\n", modelName, postID)
+				idxStr := formatIndex(currIndex, totalCount)
+				fmt.Printf("%s[skip] Candid post %s/%s — already on disk\n", idxStr, modelName, postID)
 				if dbErr == nil {
 					markDownloaded(db, "candid", postID, postName)
 					db.Close()
@@ -233,9 +244,11 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 		db.Close()
 	}
 	fmt.Println("ModelDir:", modelDir) //debug info for looking directory name.
+	fmt.Println()
 	checkAndCreateDir(modelDir)
 
-	fmt.Printf("Candid post %s/%s (%s) — %d image(s)\n", modelName, postID, postName, len(imagesFound))
+	idxStr := formatIndex(currIndex, totalCount)
+	fmt.Printf("%sCandid post %s/%s (%s) — %d image(s)\n", idxStr, modelName, postID, postName, len(imagesFound))
 
 	if len(imagesFound) == 1 {
 		printProgress("Downloading", 0, 1, 0)
@@ -301,8 +314,8 @@ func downloadCandidPost(albumURL string, rawBytes []byte, info PageInfo, downloa
 	fmt.Println()
 }
 
-func downloadBlogPost(postURL string, downloadsDir string) {
-	downloadAlbum(postURL, downloadsDir, false, true)
+func downloadBlogPost(postURL string, downloadsDir string, currIndex, totalCount int) {
+	downloadAlbum(postURL, downloadsDir, false, true, currIndex, totalCount)
 }
 
 func downloadGroupThread(threadURL string, downloadsDir string) {
@@ -446,6 +459,16 @@ func downloadGroupThread(threadURL string, downloadsDir string) {
 	}
 }
 
+func extractModelFromURL(urlStr string) string {
+	parts := strings.Split(strings.TrimSuffix(urlStr, "/"), "/")
+	for i, p := range parts {
+		if (p == "girls" || p == "members") && i+1 < len(parts) {
+			return titleCaseModelName(parts[i+1])
+		}
+	}
+	return ""
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -461,7 +484,15 @@ func main() {
 	albumURL := args[1]
 	finalizeWithZip := args[len(args)-1] == "-z"
 
-	fmt.Println("DownloadsDir:", downloadsDir) //debug info for looking directory name.
+	fmt.Println("[" + time.Now().Format("2006-01-02 15:04:05") + "]")
+	fmt.Println("URL:", albumURL)
+	modelName := extractModelFromURL(albumURL)
+	if modelName != "" {
+		fmt.Println("MODEL:", modelName)
+		fmt.Println("ModelDir:", filepath.Join(downloadsDir, modelName))
+	}
+	fmt.Println()
+
 	checkAndCreateDir(downloadsDir)
 
 	switch {
@@ -469,10 +500,10 @@ func main() {
 		downloadGroupThread(albumURL, downloadsDir)
 
 	case strings.Contains(albumURL, "/videos/"):
-		downloadVideoPost(albumURL, downloadsDir, "")
+		downloadVideoPost(albumURL, downloadsDir, "", 1, 1)
 
 	case strings.Contains(albumURL, "/album/"):
-		downloadAlbum(albumURL, downloadsDir, finalizeWithZip, false)
+		downloadAlbum(albumURL, downloadsDir, finalizeWithZip, false, 1, 1)
 
 	case strings.Contains(albumURL, "/photos"):
 		photoParts := strings.Split(strings.TrimSuffix(albumURL, "/"), "/")
@@ -484,58 +515,69 @@ func main() {
 			}
 		}
 		albumLinks := getAllAlbumLinks(albumURL, photoModel)
-		fmt.Println("Found", len(albumLinks), "albums")
 		isCandid := strings.Contains(albumURL, "/candids/")
-		for _, link := range albumLinks {
-			downloadAlbum(link, downloadsDir, finalizeWithZip, isCandid)
+		heading := "Photosets"
+		if isCandid {
+			heading = "Candid Posts"
+		}
+		fmt.Printf("Found %d %s\n", len(albumLinks), heading)
+		for idx, link := range albumLinks {
+			downloadAlbum(link, downloadsDir, finalizeWithZip, isCandid, idx+1, len(albumLinks))
+		}
+		if photoModel != "" {
+			fmt.Printf("%s Finished Downloading...\n", titleCaseModelName(photoModel))
 		}
 
 	default:
 		parts := strings.Split(strings.TrimSuffix(albumURL, "/"), "/")
 		modelName := parts[len(parts)-1]
 		base := strings.TrimSuffix(albumURL, "/")
-		fmt.Printf("Content base: %s (model: %s)\n", albumURL, modelName)
+		normalizedModelName := titleCaseModelName(modelName)
 
 		seen := map[string]bool{}
 
 		photosetLinks := getAllAlbumLinks(base+"/photos/view/photosets/", modelName)
-		fmt.Println("Found", len(photosetLinks), "photosets")
-		for _, link := range photosetLinks {
+		fmt.Println("Found", len(photosetLinks), "Photosets")
+		for idx, link := range photosetLinks {
 			seen[link] = true
-			downloadAlbum(link, downloadsDir, finalizeWithZip, false)
+			downloadAlbum(link, downloadsDir, finalizeWithZip, false, idx+1, len(photosetLinks))
 		}
 
+		fmt.Println()
 		candidLinks := getAllAlbumLinks(base+"/photos/view/candids/", modelName)
-		fmt.Println("Found", len(candidLinks), "candid posts")
-		for _, link := range candidLinks {
+		fmt.Println("Found", len(candidLinks), "Candid Posts")
+		for idx, link := range candidLinks {
 			if seen[link] {
 				continue
 			}
 			seen[link] = true
-			downloadAlbum(link, downloadsDir, finalizeWithZip, true)
+			downloadAlbum(link, downloadsDir, finalizeWithZip, true, idx+1, len(candidLinks))
 		}
 
+		fmt.Println()
 		videoLinks := getAllVideoLinks(base + "/videos/")
-		fmt.Println("Found", len(videoLinks), "videos")
-		for _, link := range videoLinks {
+		fmt.Println("Found", len(videoLinks), "Videos")
+		for idx, link := range videoLinks {
 			if seen[link] {
 				continue
 			}
 			seen[link] = true
-			downloadVideoPost(link, downloadsDir, modelName)
+			downloadVideoPost(link, downloadsDir, modelName, idx+1, len(videoLinks))
 		}
 
+		fmt.Println()
 		blogLinks := getAllBlogLinks(base+"/blog/", modelName)
-		fmt.Println("Found", len(blogLinks), "blog posts")
-		for _, link := range blogLinks {
+		fmt.Println("Found", len(blogLinks), "Blog Posts")
+		for idx, link := range blogLinks {
 			if seen[link] {
 				continue
 			}
 			seen[link] = true
-			downloadBlogPost(link, downloadsDir)
+			downloadBlogPost(link, downloadsDir, idx+1, len(blogLinks))
 		}
 
-		fmt.Println("Model:", modelName, "Done!")
+		fmt.Println()
+		fmt.Printf("%s Finished Downloading...\n", normalizedModelName)
 	}
 }
 
