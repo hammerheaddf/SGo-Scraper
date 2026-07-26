@@ -147,7 +147,7 @@ func parseVideoInfo(videoURL string, rawBytes []byte, expectedModel string) (str
 	return videoID, truncateName(postTitle, 80), truncateName(modelName, 80)
 }
 
-func downloadVideoPost(videoURL string, downloadsDir string, expectedModel string) {
+func downloadVideoPost(videoURL string, downloadsDir string, expectedModel string, currIndex, totalCount int) {
 	rawBytes := getContents(videoURL)
 
 	videoID, postTitle, modelName := parseVideoInfo(videoURL, rawBytes, expectedModel)
@@ -156,7 +156,8 @@ func downloadVideoPost(videoURL string, downloadsDir string, expectedModel strin
 	if dbErr == nil {
 		if isDownloaded(db, "video", videoID) {
 			db.Close()
-			fmt.Printf("[skip] Video %s/%s — already in database\n", modelName, videoID)
+			idxStr := formatIndex(currIndex, totalCount)
+			fmt.Printf("%s[skip] Video %s/%s — already in database\n", idxStr, modelName, videoID)
 			return
 		}
 	}
@@ -167,7 +168,8 @@ func downloadVideoPost(videoURL string, downloadsDir string, expectedModel strin
 	if entries, err := os.ReadDir(modelDir); err == nil {
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), videoID) {
-				fmt.Printf("[skip] Video %s/%s — already on disk\n", modelName, videoID)
+				idxStr := formatIndex(currIndex, totalCount)
+				fmt.Printf("%s[skip] Video %s/%s — already on disk\n", idxStr, modelName, videoID)
 				if dbErr == nil {
 					markDownloaded(db, "video", videoID, postTitle)
 					db.Close()
@@ -182,14 +184,16 @@ func downloadVideoPost(videoURL string, downloadsDir string, expectedModel strin
 
 	streamURL := crawlVideoStream(bytes.NewReader(rawBytes))
 	if streamURL == "" {
-		fmt.Printf("Video %s/%s — no stream found, skipping\n", modelName, videoID)
+		idxStr := formatIndex(currIndex, totalCount)
+		fmt.Printf("%sVideo %s/%s — could not find stream URL\n", idxStr, modelName, videoID)
 		return
 	}
 
 	checkAndCreateDir(modelDir)
+	idxStr := formatIndex(currIndex, totalCount)
 	output := filepath.Join(modelDir, fmt.Sprintf("%s - %s.mp4", videoID, postTitle))
 
-	fmt.Printf("Video post %s/%s (%s) — downloading...\n", modelName, videoID, postTitle)
+	fmt.Printf("%sVideo post %s/%s (%s) — downloading...\n", idxStr, modelName, videoID, postTitle)
 	headers := "Referer: https://www.suicidegirls.com/\r\n" +
 		"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36\r\n"
 	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-headers", headers, "-y", "-i", streamURL, "-c", "copy", output)
